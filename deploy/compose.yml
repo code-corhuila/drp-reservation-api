@@ -1,0 +1,23 @@
+# API process only (Anexo J). No Postgres container. Engine: drp-infra-postgres.
+
+name: ${COMPOSE_PROJECT_NAME:-drp-dev}
+
+services:
+  reservation-api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: drp-reservation-api
+    environment:
+      HTTP_ADDR: ${HTTP_ADDR:-:8083}
+      SERVICE_NAME: ${SERVICE_NAME:-reservation-service}
+      IDENTITY_JWKS_URL: ${IDENTITY_JWKS_URL:-http://identity-api:8081/api/v1/auth/jwks}
+    ports:
+      - "${HTTP_PORT:-8083}:8083"
+    networks:
+      - pg
+
+networks:
+  pg:
+    name: ${RESERVATION_API_NETWORK:-drp-dev_default}
+    external: true
