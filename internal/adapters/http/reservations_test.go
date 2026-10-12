@@ -183,3 +183,68 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("status %d", res.StatusCode)
 	}
 }
+
+func TestCreateInPastReturns422Envelope(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	body := []byte(`{"spaceId":"` + norte + `","startAt":"2026-10-19T14:00:00Z","endAt":"2026-10-19T16:00:00Z"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations", bytes.NewReader(body))
+	req.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	req.Header.Set("Idempotency-Key", "key-past-422")
+	req.Header.Set("X-Correlation-Id", "33333333-3333-3333-3333-333333333333")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	assertErrorEnvelope(t, res, http.StatusUnprocessableEntity, "BUSINESS_RULE_VIOLATION", "33333333-3333-3333-3333-333333333333")
+}
+
+func TestCancelTooSoonReturns422Envelope(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	body := []byte(`{"spaceId":"` + norte + `","startAt":"2026-10-20T13:00:00Z","endAt":"2026-10-20T14:00:00Z"}`)
+	create, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations", bytes.NewReader(body))
+	create.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	create.Header.Set("Idempotency-Key", "key-cancel-422")
+	created, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create %d", created.StatusCode)
+	}
+	var dto reservationDTO
+	if err := json.NewDecoder(created.Body).Decode(&dto); err != nil {
+		t.Fatal(err)
+	}
+
+	cancel, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations/"+dto.ID+"/cancel", nil)
+	cancel.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	cancel.Header.Set("X-Correlation-Id", "44444444-4444-4444-4444-444444444444")
+	res, err := http.DefaultClient.Do(cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	assertErrorEnvelope(t, res, http.StatusUnprocessableEntity, "INVALID_STATUS_TRANSITION", "44444444-4444-4444-4444-444444444444")
+}
+
+func assertErrorEnvelope(t *testing.T, res *http.Response, status int, code, traceID string) {
+	t.Helper()
+	if res.StatusCode != status {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	var raw map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["error"] != code || raw["message"] == "" || raw["traceId"] != traceID {
+		t.Fatalf("envelope %+v", raw)
+	}
+}
