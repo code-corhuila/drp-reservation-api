@@ -3,10 +3,14 @@ package domain
 import "time"
 
 const (
-	EventReservationCreated   = "ReservationCreated"
-	EventReservationCancelled = "ReservationCancelled"
-	TopicReservationCreated   = "reservation.created"
-	TopicReservationCancelled = "reservation.cancelled"
+	EventReservationCreated    = "ReservationCreated"
+	EventReservationConfirmed  = "ReservationConfirmed"
+	EventReservationCancelled  = "ReservationCancelled"
+	EventPaymentConfirmed      = "PaymentConfirmed"
+	EventPaymentFailed         = "PaymentFailed"
+	TopicReservationCreated    = "reservation.created"
+	TopicReservationConfirmed  = "reservation.confirmed"
+	TopicReservationCancelled  = "reservation.cancelled"
 )
 
 // OutboxEvent is a fact already stored with the aggregate write (norma: same transaction).

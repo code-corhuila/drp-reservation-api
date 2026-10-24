@@ -39,11 +39,12 @@ func main() {
 			Spaces:       memory.Corte2Spaces(),
 			Idempotency:  memory.NewIdempotency(),
 			Outbox:       memory.NewOutbox(),
+			Inbox:        memory.NewInbox(),
 		},
 		Tokens: tokens,
 	})
 
-	log.Printf("drp-reservation-api listening on %s (memory bookings; JWKS %s; no DDL in this repo)", addr, jwksURL)
+	log.Printf("drp-reservation-api listening on %s (memory bookings; consume PaymentConfirmed in-process; JWKS %s; no DDL in this repo)", addr, jwksURL)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}

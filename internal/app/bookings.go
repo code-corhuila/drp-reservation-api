@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"sort"
 	"time"
 
@@ -38,11 +39,20 @@ type CreateCommand struct {
 	RawBody        string
 }
 
+type PaymentOutcome struct {
+	EventID       string
+	EventType     string
+	ReservationID string
+	PaymentID     string
+	CorrelationID string
+}
+
 type Bookings struct {
 	Reservations ReservationRepository
 	Spaces       SpaceCatalog
 	Idempotency  IdempotencyStore
 	Outbox       Outbox
+	Inbox        Inbox
 	Now          func() time.Time
 	NewID        func() string
 }
@@ -193,6 +203,81 @@ func (b Bookings) Cancel(ctx context.Context, actor Principal, id string) (domai
 		return domain.Reservation{}, err
 	}
 	return got, nil
+}
+
+// ApplyPayment is E-23. Confirm is not an HTTP command (D-C14).
+func (b Bookings) ApplyPayment(ctx context.Context, ev PaymentOutcome) (domain.Reservation, bool, error) {
+	if ev.EventID == "" || ev.ReservationID == "" {
+		return domain.Reservation{}, false, ErrValidation
+	}
+	if b.Inbox != nil && b.Inbox.Seen(ctx, ev.EventID) {
+		r, err := b.Reservations.FindByID(ctx, ev.ReservationID)
+		if err != nil {
+			return domain.Reservation{}, false, nil
+		}
+		return r, false, nil
+	}
+	switch ev.EventType {
+	case domain.EventPaymentFailed:
+		return b.applyPaymentFailed(ctx, ev)
+	case domain.EventPaymentConfirmed:
+		return b.applyPaymentConfirmed(ctx, ev)
+	default:
+		return domain.Reservation{}, false, ErrValidation
+	}
+}
+
+func (b Bookings) applyPaymentFailed(ctx context.Context, ev PaymentOutcome) (domain.Reservation, bool, error) {
+	r, err := b.Reservations.FindByID(ctx, ev.ReservationID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return domain.Reservation{}, false, err
+	}
+	if b.Inbox != nil {
+		b.Inbox.Mark(ctx, ev.EventID)
+	}
+	return r, false, nil
+}
+
+func (b Bookings) applyPaymentConfirmed(ctx context.Context, ev PaymentOutcome) (domain.Reservation, bool, error) {
+	r, err := b.Reservations.FindByID(ctx, ev.ReservationID)
+	if err != nil {
+		return domain.Reservation{}, false, err
+	}
+	if r.State == domain.StateCancelled {
+		if b.Inbox != nil {
+			b.Inbox.Mark(ctx, ev.EventID)
+		}
+		return r, false, nil
+	}
+	if r.State == domain.StateConfirmed {
+		if b.Inbox != nil {
+			b.Inbox.Mark(ctx, ev.EventID)
+		}
+		return r, false, nil
+	}
+	all, err := b.Reservations.List(ctx)
+	if err != nil {
+		return domain.Reservation{}, false, err
+	}
+	candidate, err := r.Confirm(b.now())
+	if err != nil {
+		return domain.Reservation{}, false, ErrTransition
+	}
+	for _, other := range all {
+		if domain.ConfirmedOverlap(other, candidate) {
+			return domain.Reservation{}, false, ErrOverlap
+		}
+	}
+	if err := b.Reservations.Save(ctx, candidate); err != nil {
+		return domain.Reservation{}, false, err
+	}
+	if err := b.appendEvent(ctx, candidate, domain.EventReservationConfirmed, domain.TopicReservationConfirmed); err != nil {
+		return domain.Reservation{}, false, err
+	}
+	if b.Inbox != nil {
+		b.Inbox.Mark(ctx, ev.EventID)
+	}
+	return candidate, true, nil
 }
 
 func (b Bookings) appendEvent(ctx context.Context, r domain.Reservation, eventType, topic string) error {
