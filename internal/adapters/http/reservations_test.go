@@ -40,9 +40,11 @@ func reservationMux(t *testing.T) (http.Handler, testIssuer) {
 			Spaces:       memory.Corte2Spaces(),
 			Idempotency:  memory.NewIdempotency(),
 			Outbox:       memory.NewOutbox(),
+			Inbox:        memory.NewInbox(),
 			Now:          func() time.Time { return fixed },
 		},
-		Tokens: ver,
+		Tokens:        ver,
+		InternalToken: "spacehub-dev-internal",
 	})
 	return mux, testIssuer{priv: priv}
 }
@@ -233,6 +235,83 @@ func TestCancelTooSoonReturns422Envelope(t *testing.T) {
 	}
 	defer res.Body.Close()
 	assertErrorEnvelope(t, res, http.StatusUnprocessableEntity, "INVALID_STATUS_TRANSITION", "44444444-4444-4444-4444-444444444444")
+}
+
+func TestInternalEventConfirmsReservation(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	body := []byte(`{"spaceId":"` + norte + `","startAt":"2026-10-21T14:00:00Z","endAt":"2026-10-21T16:00:00Z"}`)
+	create, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations", bytes.NewReader(body))
+	create.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	create.Header.Set("Idempotency-Key", "key-pay-confirm")
+	created, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create %d", created.StatusCode)
+	}
+	var dto reservationDTO
+	if err := json.NewDecoder(created.Body).Decode(&dto); err != nil {
+		t.Fatal(err)
+	}
+
+	event := []byte(`{"eventId":"77777777-7777-4777-8777-777777777777","eventType":"PaymentConfirmed","payload":{"paymentId":"88888888-8888-4888-8888-888888888888","reservationId":"` + dto.ID + `","amountCents":5000000,"currency":"COP"},"correlationId":"7a3c91e2-1111-4111-8111-000000000001"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/events", bytes.NewReader(event))
+	req.Header.Set("X-Internal-Token", "spacehub-dev-internal")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusAccepted {
+		t.Fatalf("consume %d", res.StatusCode)
+	}
+
+	get, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/reservations/"+dto.ID, nil)
+	get.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	got, err := http.DefaultClient.Do(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Body.Close()
+	var after reservationDTO
+	if err := json.NewDecoder(got.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after.State != "CONFIRMED" {
+		t.Fatalf("state %s", after.State)
+	}
+
+	confirm, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations/"+dto.ID+"/confirm", nil)
+	confirm.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	denied, err := http.DefaultClient.Do(confirm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer denied.Body.Close()
+	if denied.StatusCode != http.StatusNotFound {
+		t.Fatalf("confirm route %d", denied.StatusCode)
+	}
+}
+
+func TestInternalEventWithoutTokenIs401(t *testing.T) {
+	mux, _ := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/events", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("X-User-Id", member)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d", res.StatusCode)
+	}
 }
 
 func assertErrorEnvelope(t *testing.T, res *http.Response, status int, code, traceID string) {
