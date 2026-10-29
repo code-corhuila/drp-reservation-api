@@ -165,3 +165,50 @@ func TestMissingReservationIsNotFound(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+type capturePublisher struct {
+	types []string
+	fail  bool
+}
+
+func (c *capturePublisher) Publish(_ context.Context, e domain.OutboxEvent) error {
+	if c.fail {
+		return errPublish
+	}
+	c.types = append(c.types, e.EventType)
+	return nil
+}
+
+var errPublish = errString("notification down")
+
+type errString string
+
+func (e errString) Error() string { return string(e) }
+
+func TestConfirmDrainMarksPublished(t *testing.T) {
+	svc, _, box := consumeSvc(t)
+	pub := &capturePublisher{}
+	svc.Publisher = pub
+	if _, _, err := svc.ApplyPayment(context.Background(), confirmedEvent()); err != nil {
+		t.Fatal(err)
+	}
+	unpublished, _ := box.Unpublished(context.Background())
+	if len(unpublished) != 0 {
+		t.Fatalf("expected drain, still %d", len(unpublished))
+	}
+	if len(pub.types) != 1 || pub.types[0] != domain.EventReservationConfirmed {
+		t.Fatalf("published %#v", pub.types)
+	}
+}
+
+func TestConfirmDrainKeepsRowWhenSinkFails(t *testing.T) {
+	svc, _, box := consumeSvc(t)
+	svc.Publisher = &capturePublisher{fail: true}
+	if _, applied, err := svc.ApplyPayment(context.Background(), confirmedEvent()); err != nil || !applied {
+		t.Fatalf("reservation must stay confirmed: applied=%v err=%v", applied, err)
+	}
+	unpublished, _ := box.Unpublished(context.Background())
+	if len(unpublished) != 1 {
+		t.Fatalf("failed sink must leave the row: %d", len(unpublished))
+	}
+}

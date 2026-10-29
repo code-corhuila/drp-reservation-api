@@ -53,6 +53,7 @@ type Bookings struct {
 	Idempotency  IdempotencyStore
 	Outbox       Outbox
 	Inbox        Inbox
+	Publisher    EventPublisher
 	Now          func() time.Time
 	NewID        func() string
 }
@@ -180,6 +181,7 @@ func (b Bookings) Create(ctx context.Context, cmd CreateCommand) (domain.Reserva
 		return domain.Reservation{}, false, err
 	}
 	b.Idempotency.Put(ctx, cmd.Actor.Subject, cmd.IdempotencyKey, cmd.RawBody, candidate)
+	b.drain(ctx)
 	return candidate, false, nil
 }
 
@@ -202,6 +204,7 @@ func (b Bookings) Cancel(ctx context.Context, actor Principal, id string) (domai
 	if err := b.appendEvent(ctx, got, domain.EventReservationCancelled, domain.TopicReservationCancelled); err != nil {
 		return domain.Reservation{}, err
 	}
+	b.drain(ctx)
 	return got, nil
 }
 
@@ -277,6 +280,7 @@ func (b Bookings) applyPaymentConfirmed(ctx context.Context, ev PaymentOutcome) 
 	if b.Inbox != nil {
 		b.Inbox.Mark(ctx, ev.EventID)
 	}
+	b.drain(ctx)
 	return candidate, true, nil
 }
 
@@ -305,4 +309,20 @@ func (b Bookings) appendEvent(ctx context.Context, r domain.Reservation, eventTy
 		Version:       1,
 		PayloadJSON:   string(payload),
 	})
+}
+
+func (b Bookings) drain(ctx context.Context) {
+	if b.Publisher == nil || b.Outbox == nil {
+		return
+	}
+	events, err := b.Outbox.Unpublished(ctx)
+	if err != nil {
+		return
+	}
+	for _, e := range events {
+		if err := b.Publisher.Publish(ctx, e); err != nil {
+			return
+		}
+		_ = b.Outbox.MarkPublished(ctx, e.EventID)
+	}
 }
