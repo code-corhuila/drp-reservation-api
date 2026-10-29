@@ -4,8 +4,12 @@ import "time"
 
 const (
 	EventReservationCreated   = "ReservationCreated"
+	EventReservationConfirmed = "ReservationConfirmed"
 	EventReservationCancelled = "ReservationCancelled"
+	EventPaymentConfirmed     = "PaymentConfirmed"
+	EventPaymentFailed        = "PaymentFailed"
 	TopicReservationCreated   = "reservation.created"
+	TopicReservationConfirmed = "reservation.confirmed"
 	TopicReservationCancelled = "reservation.cancelled"
 )
 
@@ -19,5 +23,6 @@ type OutboxEvent struct {
 	OccurredAt    time.Time
 	Version       int
 	PayloadJSON   string
+	CorrelationID string
 	Published     bool
 }

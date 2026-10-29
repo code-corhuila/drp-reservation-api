@@ -34,3 +34,15 @@ func (o *Outbox) Unpublished(_ context.Context) ([]domain.OutboxEvent, error) {
 	}
 	return out, nil
 }
+
+func (o *Outbox) MarkPublished(_ context.Context, eventID string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i, e := range o.events {
+		if e.EventID == eventID {
+			e.Published = true
+			o.events[i] = e
+		}
+	}
+	return nil
+}

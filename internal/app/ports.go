@@ -37,4 +37,16 @@ type TokenVerifier interface {
 type Outbox interface {
 	Append(ctx context.Context, e domain.OutboxEvent) error
 	Unpublished(ctx context.Context) ([]domain.OutboxEvent, error)
+	MarkPublished(ctx context.Context, eventID string) error
+}
+
+// EventPublisher is the walking HTTP sink. AMQP replaces it later.
+type EventPublisher interface {
+	Publish(ctx context.Context, e domain.OutboxEvent) error
+}
+
+// Inbox de-duplicates consumed events by eventId (BR-006 / E-23).
+type Inbox interface {
+	Seen(ctx context.Context, eventID string) bool
+	Mark(ctx context.Context, eventID string)
 }
