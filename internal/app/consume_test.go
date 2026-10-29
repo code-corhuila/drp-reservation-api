@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +70,12 @@ func TestPaymentConfirmedMovesPendingToConfirmed(t *testing.T) {
 	}
 	if unpublished[0].Topic != domain.TopicReservationConfirmed {
 		t.Fatalf("topic %s", unpublished[0].Topic)
+	}
+	if unpublished[0].CorrelationID != "trace-pay-1" {
+		t.Fatalf("correlation %s", unpublished[0].CorrelationID)
+	}
+	if !strings.Contains(unpublished[0].PayloadJSON, `"userId":"`+member+`"`) {
+		t.Fatalf("payload %s", unpublished[0].PayloadJSON)
 	}
 }
 
@@ -168,6 +175,7 @@ func TestMissingReservationIsNotFound(t *testing.T) {
 
 type capturePublisher struct {
 	types []string
+	ids   []string
 	fail  bool
 }
 
@@ -176,6 +184,7 @@ func (c *capturePublisher) Publish(_ context.Context, e domain.OutboxEvent) erro
 		return errPublish
 	}
 	c.types = append(c.types, e.EventType)
+	c.ids = append(c.ids, e.CorrelationID)
 	return nil
 }
 
@@ -198,6 +207,9 @@ func TestConfirmDrainMarksPublished(t *testing.T) {
 	}
 	if len(pub.types) != 1 || pub.types[0] != domain.EventReservationConfirmed {
 		t.Fatalf("published %#v", pub.types)
+	}
+	if len(pub.ids) != 1 || pub.ids[0] != "trace-pay-1" {
+		t.Fatalf("correlation %#v", pub.ids)
 	}
 }
 

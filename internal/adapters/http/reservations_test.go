@@ -204,7 +204,48 @@ func TestCreateInPastReturns422Envelope(t *testing.T) {
 	assertErrorEnvelope(t, res, http.StatusUnprocessableEntity, "BUSINESS_RULE_VIOLATION", "33333333-3333-3333-3333-333333333333")
 }
 
-func TestCancelTooSoonReturns422Envelope(t *testing.T) {
+func TestCancelPaymentPendingWithinTwoHoursSucceeds(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	body := []byte(`{"spaceId":"` + norte + `","startAt":"2026-10-20T13:00:00Z","endAt":"2026-10-20T14:00:00Z"}`)
+	create, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations", bytes.NewReader(body))
+	create.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	create.Header.Set("Idempotency-Key", "key-cancel-pending")
+	created, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create %d", created.StatusCode)
+	}
+	var dto reservationDTO
+	if err := json.NewDecoder(created.Body).Decode(&dto); err != nil {
+		t.Fatal(err)
+	}
+
+	cancel, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations/"+dto.ID+"/cancel", nil)
+	cancel.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	res, err := http.DefaultClient.Do(cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("PAYMENT_PENDING must cancel (D-C17): %d", res.StatusCode)
+	}
+	var after reservationDTO
+	if err := json.NewDecoder(res.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after.State != "CANCELLED" {
+		t.Fatalf("state %s", after.State)
+	}
+}
+
+func TestCancelConfirmedTooSoonReturns422Envelope(t *testing.T) {
 	mux, keys := reservationMux(t)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -226,6 +267,18 @@ func TestCancelTooSoonReturns422Envelope(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	event := []byte(`{"eventId":"77777777-7777-4777-8777-777777777778","eventType":"PaymentConfirmed","payload":{"paymentId":"88888888-8888-4888-8888-888888888889","reservationId":"` + dto.ID + `"},"correlationId":"trace-cancel-soon"}`)
+	pay, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/events", bytes.NewReader(event))
+	pay.Header.Set("X-Internal-Token", "spacehub-dev-internal")
+	acked, err := http.DefaultClient.Do(pay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer acked.Body.Close()
+	if acked.StatusCode != http.StatusAccepted {
+		t.Fatalf("consume %d", acked.StatusCode)
+	}
+
 	cancel, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations/"+dto.ID+"/cancel", nil)
 	cancel.Header.Set("Authorization", keys.bearer(t, member, "USER"))
 	cancel.Header.Set("X-Correlation-Id", "44444444-4444-4444-4444-444444444444")
@@ -235,6 +288,85 @@ func TestCancelTooSoonReturns422Envelope(t *testing.T) {
 	}
 	defer res.Body.Close()
 	assertErrorEnvelope(t, res, http.StatusUnprocessableEntity, "INVALID_STATUS_TRANSITION", "44444444-4444-4444-4444-444444444444")
+}
+
+func TestForeignReservationIs404(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	body := []byte(`{"spaceId":"` + norte + `","startAt":"2026-10-21T14:00:00Z","endAt":"2026-10-21T16:00:00Z"}`)
+	create, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations", bytes.NewReader(body))
+	create.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	create.Header.Set("Idempotency-Key", "key-foreign-404")
+	created, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.Body.Close()
+	var dto reservationDTO
+	if err := json.NewDecoder(created.Body).Decode(&dto); err != nil {
+		t.Fatal(err)
+	}
+
+	other := "55555555-5555-5555-5555-555555555555"
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/reservations/"+dto.ID, nil)
+	req.Header.Set("Authorization", keys.bearer(t, other, "USER"))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("foreign GET %d", res.StatusCode)
+	}
+}
+
+func TestInternalPaymentFailedLeavesPending(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	body := []byte(`{"spaceId":"` + norte + `","startAt":"2026-10-21T14:00:00Z","endAt":"2026-10-21T16:00:00Z"}`)
+	create, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations", bytes.NewReader(body))
+	create.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	create.Header.Set("Idempotency-Key", "key-pay-failed")
+	created, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.Body.Close()
+	var dto reservationDTO
+	if err := json.NewDecoder(created.Body).Decode(&dto); err != nil {
+		t.Fatal(err)
+	}
+
+	event := []byte(`{"eventId":"77777777-7777-4777-8777-777777777779","eventType":"PaymentFailed","payload":{"paymentId":"88888888-8888-4888-8888-888888888880","reservationId":"` + dto.ID + `"}}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/events", bytes.NewReader(event))
+	req.Header.Set("X-Internal-Token", "spacehub-dev-internal")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusAccepted {
+		t.Fatalf("consume %d", res.StatusCode)
+	}
+
+	get, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/reservations/"+dto.ID, nil)
+	get.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	got, err := http.DefaultClient.Do(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Body.Close()
+	var after reservationDTO
+	if err := json.NewDecoder(got.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after.State != "PAYMENT_PENDING" {
+		t.Fatalf("state %s", after.State)
+	}
 }
 
 func TestInternalEventConfirmsReservation(t *testing.T) {

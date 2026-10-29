@@ -37,6 +37,7 @@ type CreateCommand struct {
 	EndAt          time.Time
 	IdempotencyKey string
 	RawBody        string
+	CorrelationID  string
 }
 
 type PaymentOutcome struct {
@@ -177,7 +178,7 @@ func (b Bookings) Create(ctx context.Context, cmd CreateCommand) (domain.Reserva
 	if err := b.Reservations.Save(ctx, candidate); err != nil {
 		return domain.Reservation{}, false, err
 	}
-	if err := b.appendEvent(ctx, candidate, domain.EventReservationCreated, domain.TopicReservationCreated); err != nil {
+	if err := b.appendEvent(ctx, candidate, domain.EventReservationCreated, domain.TopicReservationCreated, cmd.CorrelationID); err != nil {
 		return domain.Reservation{}, false, err
 	}
 	b.Idempotency.Put(ctx, cmd.Actor.Subject, cmd.IdempotencyKey, cmd.RawBody, candidate)
@@ -185,13 +186,14 @@ func (b Bookings) Create(ctx context.Context, cmd CreateCommand) (domain.Reserva
 	return candidate, false, nil
 }
 
-func (b Bookings) Cancel(ctx context.Context, actor Principal, id string) (domain.Reservation, error) {
+func (b Bookings) Cancel(ctx context.Context, actor Principal, id, correlationID string) (domain.Reservation, error) {
 	r, err := b.Get(ctx, actor, id)
 	if err != nil {
 		return domain.Reservation{}, err
 	}
 	now := b.now()
-	if !r.Period.Start.After(now.Add(2 * time.Hour)) {
+	// D-C17: PAYMENT_PENDING is always cancellable. Only CONFIRMED has the 2h window.
+	if r.State == domain.StateConfirmed && !r.Period.Start.After(now.Add(2*time.Hour)) {
 		return domain.Reservation{}, ErrTransition
 	}
 	got, err := r.Cancel(now)
@@ -201,7 +203,7 @@ func (b Bookings) Cancel(ctx context.Context, actor Principal, id string) (domai
 	if err := b.Reservations.Save(ctx, got); err != nil {
 		return domain.Reservation{}, err
 	}
-	if err := b.appendEvent(ctx, got, domain.EventReservationCancelled, domain.TopicReservationCancelled); err != nil {
+	if err := b.appendEvent(ctx, got, domain.EventReservationCancelled, domain.TopicReservationCancelled, correlationID); err != nil {
 		return domain.Reservation{}, err
 	}
 	b.drain(ctx)
@@ -274,7 +276,7 @@ func (b Bookings) applyPaymentConfirmed(ctx context.Context, ev PaymentOutcome) 
 	if err := b.Reservations.Save(ctx, candidate); err != nil {
 		return domain.Reservation{}, false, err
 	}
-	if err := b.appendEvent(ctx, candidate, domain.EventReservationConfirmed, domain.TopicReservationConfirmed); err != nil {
+	if err := b.appendEvent(ctx, candidate, domain.EventReservationConfirmed, domain.TopicReservationConfirmed, ev.CorrelationID); err != nil {
 		return domain.Reservation{}, false, err
 	}
 	if b.Inbox != nil {
@@ -284,7 +286,7 @@ func (b Bookings) applyPaymentConfirmed(ctx context.Context, ev PaymentOutcome) 
 	return candidate, true, nil
 }
 
-func (b Bookings) appendEvent(ctx context.Context, r domain.Reservation, eventType, topic string) error {
+func (b Bookings) appendEvent(ctx context.Context, r domain.Reservation, eventType, topic, correlationID string) error {
 	if b.Outbox == nil {
 		return nil
 	}
@@ -308,6 +310,7 @@ func (b Bookings) appendEvent(ctx context.Context, r domain.Reservation, eventTy
 		OccurredAt:    b.now(),
 		Version:       1,
 		PayloadJSON:   string(payload),
+		CorrelationID: correlationID,
 	})
 }
 

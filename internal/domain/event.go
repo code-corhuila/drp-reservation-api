@@ -23,5 +23,6 @@ type OutboxEvent struct {
 	OccurredAt    time.Time
 	Version       int
 	PayloadJSON   string
+	CorrelationID string
 	Published     bool
 }

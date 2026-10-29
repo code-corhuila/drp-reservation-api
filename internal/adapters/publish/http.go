@@ -26,11 +26,15 @@ func (h HTTP) Publish(ctx context.Context, e domain.OutboxEvent) error {
 	if err := json.Unmarshal([]byte(e.PayloadJSON), &payload); err != nil {
 		payload = map[string]string{"raw": e.PayloadJSON}
 	}
-	body, err := json.Marshal(map[string]any{
+	envelope := map[string]any{
 		"eventId":   e.EventID,
 		"eventType": e.EventType,
 		"payload":   payload,
-	})
+	}
+	if strings.TrimSpace(e.CorrelationID) != "" {
+		envelope["correlationId"] = e.CorrelationID
+	}
+	body, err := json.Marshal(envelope)
 	if err != nil {
 		return err
 	}
@@ -41,6 +45,9 @@ func (h HTTP) Publish(ctx context.Context, e domain.OutboxEvent) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Internal-Token", h.Token)
+	if cid := strings.TrimSpace(e.CorrelationID); cid != "" {
+		req.Header.Set("X-Correlation-Id", cid)
+	}
 	client := h.Client
 	if client == nil {
 		client = &http.Client{Timeout: 3 * time.Second}
