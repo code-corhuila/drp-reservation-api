@@ -29,7 +29,7 @@ type HTTP struct {
 }
 
 type spaceDTO struct {
-	Active bool `json:"active"`
+	Available bool `json:"available"`
 }
 
 func (h HTTP) Lookup(ctx context.Context, spaceID string) (bool, error) {
@@ -62,5 +62,5 @@ func (h HTTP) Lookup(ctx context.Context, spaceID string) (bool, error) {
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		return false, err
 	}
-	return body.Active, nil
+	return body.Available, nil
 }
