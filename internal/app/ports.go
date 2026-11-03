@@ -33,8 +33,25 @@ type TokenVerifier interface {
 }
 
 // Outbox records domain events in the same use-case as the aggregate write.
-// Flyway table reservation.outbox is the durable form; memory is the Corte 3 walk.
+// DATABASE_URL uses Flyway reservation.outbox (V003); empty DSN keeps memory.
 type Outbox interface {
 	Append(ctx context.Context, e domain.OutboxEvent) error
 	Unpublished(ctx context.Context) ([]domain.OutboxEvent, error)
+	MarkPublished(ctx context.Context, eventID string) error
+}
+
+// UnitOfWork is instructor-norm: outbox in the same DB transaction as the aggregate.
+type UnitOfWork interface {
+	Within(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// EventPublisher is the walking HTTP sink. AMQP replaces it later.
+type EventPublisher interface {
+	Publish(ctx context.Context, e domain.OutboxEvent) error
+}
+
+// Inbox de-duplicates consumed events by eventId (BR-006 / E-23).
+type Inbox interface {
+	Seen(ctx context.Context, eventID string) bool
+	Mark(ctx context.Context, eventID string)
 }

@@ -7,14 +7,16 @@ import (
 )
 
 type Deps struct {
-	Service  string
-	Bookings app.Bookings
-	Tokens   app.TokenVerifier
+	Service       string
+	Bookings      app.Bookings
+	Tokens        app.TokenVerifier
+	InternalToken string
 }
 
 func NewMux(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", HealthHandler(d.Service))
+	mux.Handle("POST /internal/events", RequireInternalToken(d.InternalToken)(ConsumePayment(d.Bookings)))
 	if d.Tokens != nil {
 		auth := RequireBearer(d.Tokens)
 		mux.Handle("GET /api/v1/reservations", auth(ListReservations(d.Bookings)))
