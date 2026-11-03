@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/code-corhuila/drp-reservation-api/internal/adapters/catalog"
@@ -35,12 +36,13 @@ func main() {
 			Timeout: 3 * time.Second,
 		},
 	})
-	internalToken := os.Getenv("INTERNAL_EVENT_TOKEN")
+	paymentHopToken := firstEnv("PAYMENT_INTERNAL_TOKEN", "INTERNAL_EVENT_TOKEN")
+	notifyHopToken := firstEnv("NOTIFICATION_INTERNAL_TOKEN", "INTERNAL_EVENT_TOKEN")
 	var publisher app.EventPublisher
-	if notifyURL := os.Getenv("NOTIFICATION_API_URL"); notifyURL != "" && internalToken != "" {
+	if notifyURL := os.Getenv("NOTIFICATION_API_URL"); notifyURL != "" && notifyHopToken != "" {
 		publisher = publish.HTTP{
 			BaseURL: notifyURL,
-			Token:   internalToken,
+			Token:   notifyHopToken,
 			Client:  &http.Client{Timeout: 3 * time.Second},
 		}
 	}
@@ -70,11 +72,20 @@ func main() {
 			Publisher:    publisher,
 		},
 		Tokens:        tokens,
-		InternalToken: internalToken,
+		InternalToken: paymentHopToken,
 	})
 
 	log.Printf("drp-reservation-api listening on %s (%s; POST /internal/events consumes PaymentConfirmed; space lookup HTTP when SPACE_API_URL is set; JWKS %s; no DDL in this repo)", addr, store, jwksURL)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
 }

@@ -446,6 +446,70 @@ func TestInternalEventWithoutTokenIs401(t *testing.T) {
 	}
 }
 
+func TestInternalEventUserBearerWithoutTokenIs401(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/events", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
+func TestInternalEventWrongHopTokenIs401(t *testing.T) {
+	mux, _ := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/events", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("X-Internal-Token", "change-me-notification-hop")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
+func TestInternalEventsUnsetTokenIs503(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks := security.PublicJWKS(&priv.PublicKey, testKID)
+	mux := NewMux(Deps{
+		Service: "reservation-service",
+		Bookings: app.Bookings{
+			Reservations: memory.NewReservations(),
+			Spaces:       memory.Corte2Spaces(),
+			Idempotency:  memory.NewIdempotency(),
+			Outbox:       memory.NewOutbox(),
+			Inbox:        memory.NewInbox(),
+		},
+		Tokens:        security.NewVerifier(security.StaticJWKS(jwks)),
+		InternalToken: "",
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/internal/events", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("X-Internal-Token", "change-me-tb6-payment")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
 func assertErrorEnvelope(t *testing.T, res *http.Response, status int, code, traceID string) {
 	t.Helper()
 	if res.StatusCode != status {
