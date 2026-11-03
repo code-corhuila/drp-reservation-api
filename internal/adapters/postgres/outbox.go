@@ -18,7 +18,7 @@ func NewOutbox(db *sql.DB) *Outbox {
 }
 
 func (o *Outbox) Append(ctx context.Context, e domain.OutboxEvent) error {
-	_, err := o.DB.ExecContext(ctx, `
+	_, err := use(ctx, o.DB).ExecContext(ctx, `
 INSERT INTO outbox (
   event_id, event_type, aggregate_id, aggregate_type, topic, payload, occurred_at, published
 ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7, FALSE)`,

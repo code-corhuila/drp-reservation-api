@@ -37,6 +37,7 @@ func consumeSvc(t *testing.T) (app.Bookings, *memory.Reservations, *memory.Outbo
 		Idempotency:  memory.NewIdempotency(),
 		Outbox:       box,
 		Inbox:        memory.NewInbox(),
+		TX:           memory.Tx{},
 		Now:          func() time.Time { return fixed },
 		NewID:        func() string { return "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
 	}, store, box

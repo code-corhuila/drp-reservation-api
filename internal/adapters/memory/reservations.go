@@ -37,10 +37,20 @@ func (r *Reservations) FindByID(_ context.Context, id string) (domain.Reservatio
 	return got, nil
 }
 
-func (r *Reservations) Save(_ context.Context, reservation domain.Reservation) error {
+func (r *Reservations) Save(ctx context.Context, reservation domain.Reservation) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev, had := r.byID[reservation.ID]
 	r.byID[reservation.ID] = reservation
+	registerRollback(ctx, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if had {
+			r.byID[reservation.ID] = prev
+			return
+		}
+		delete(r.byID, reservation.ID)
+	})
 	return nil
 }
 

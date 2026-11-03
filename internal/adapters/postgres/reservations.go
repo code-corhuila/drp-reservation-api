@@ -49,7 +49,7 @@ FROM reservations WHERE id = $1`, id)
 }
 
 func (r *Reservations) Save(ctx context.Context, reservation domain.Reservation) error {
-	_, err := r.DB.ExecContext(ctx, `
+	_, err := use(ctx, r.DB).ExecContext(ctx, `
 INSERT INTO reservations (id, user_id, space_id, start_at, end_at, state, created_at, updated_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (id) DO UPDATE SET

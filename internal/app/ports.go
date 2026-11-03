@@ -40,6 +40,11 @@ type Outbox interface {
 	MarkPublished(ctx context.Context, eventID string) error
 }
 
+// UnitOfWork is instructor-norm: outbox in the same DB transaction as the aggregate.
+type UnitOfWork interface {
+	Within(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
 // EventPublisher is the walking HTTP sink. AMQP replaces it later.
 type EventPublisher interface {
 	Publish(ctx context.Context, e domain.OutboxEvent) error

@@ -55,8 +55,16 @@ type Bookings struct {
 	Outbox       Outbox
 	Inbox        Inbox
 	Publisher    EventPublisher
+	TX           UnitOfWork
 	Now          func() time.Time
 	NewID        func() string
+}
+
+func (b Bookings) withTx(ctx context.Context, fn func(context.Context) error) error {
+	if b.TX == nil {
+		return fn(ctx)
+	}
+	return b.TX.Within(ctx, fn)
 }
 
 func (b Bookings) now() time.Time {
@@ -175,10 +183,12 @@ func (b Bookings) Create(ctx context.Context, cmd CreateCommand) (domain.Reserva
 			return domain.Reservation{}, false, ErrOverlap
 		}
 	}
-	if err := b.Reservations.Save(ctx, candidate); err != nil {
-		return domain.Reservation{}, false, err
-	}
-	if err := b.appendEvent(ctx, candidate, domain.EventReservationCreated, domain.TopicReservationCreated, cmd.CorrelationID); err != nil {
+	if err := b.withTx(ctx, func(ctx context.Context) error {
+		if err := b.Reservations.Save(ctx, candidate); err != nil {
+			return err
+		}
+		return b.appendEvent(ctx, candidate, domain.EventReservationCreated, domain.TopicReservationCreated, cmd.CorrelationID)
+	}); err != nil {
 		return domain.Reservation{}, false, err
 	}
 	b.Idempotency.Put(ctx, cmd.Actor.Subject, cmd.IdempotencyKey, cmd.RawBody, candidate)
@@ -200,10 +210,12 @@ func (b Bookings) Cancel(ctx context.Context, actor Principal, id, correlationID
 	if err != nil {
 		return domain.Reservation{}, ErrTransition
 	}
-	if err := b.Reservations.Save(ctx, got); err != nil {
-		return domain.Reservation{}, err
-	}
-	if err := b.appendEvent(ctx, got, domain.EventReservationCancelled, domain.TopicReservationCancelled, correlationID); err != nil {
+	if err := b.withTx(ctx, func(ctx context.Context) error {
+		if err := b.Reservations.Save(ctx, got); err != nil {
+			return err
+		}
+		return b.appendEvent(ctx, got, domain.EventReservationCancelled, domain.TopicReservationCancelled, correlationID)
+	}); err != nil {
 		return domain.Reservation{}, err
 	}
 	b.drain(ctx)
@@ -273,10 +285,12 @@ func (b Bookings) applyPaymentConfirmed(ctx context.Context, ev PaymentOutcome) 
 			return domain.Reservation{}, false, ErrOverlap
 		}
 	}
-	if err := b.Reservations.Save(ctx, candidate); err != nil {
-		return domain.Reservation{}, false, err
-	}
-	if err := b.appendEvent(ctx, candidate, domain.EventReservationConfirmed, domain.TopicReservationConfirmed, ev.CorrelationID); err != nil {
+	if err := b.withTx(ctx, func(ctx context.Context) error {
+		if err := b.Reservations.Save(ctx, candidate); err != nil {
+			return err
+		}
+		return b.appendEvent(ctx, candidate, domain.EventReservationConfirmed, domain.TopicReservationConfirmed, ev.CorrelationID)
+	}); err != nil {
 		return domain.Reservation{}, false, err
 	}
 	if b.Inbox != nil {

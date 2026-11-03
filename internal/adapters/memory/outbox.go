@@ -16,10 +16,18 @@ func NewOutbox() *Outbox {
 	return &Outbox{}
 }
 
-func (o *Outbox) Append(_ context.Context, e domain.OutboxEvent) error {
+func (o *Outbox) Append(ctx context.Context, e domain.OutboxEvent) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	n := len(o.events)
 	o.events = append(o.events, e)
+	registerRollback(ctx, func() {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if len(o.events) > n {
+			o.events = o.events[:n]
+		}
+	})
 	return nil
 }
 

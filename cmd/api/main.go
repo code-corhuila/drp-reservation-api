@@ -48,6 +48,7 @@ func main() {
 	}
 	var bookings app.ReservationRepository = memory.NewReservations()
 	var box app.Outbox = memory.NewOutbox()
+	var unit app.UnitOfWork = memory.Tx{}
 	store := "memory bookings"
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		db, err := postgres.Open(dsn)
@@ -57,7 +58,8 @@ func main() {
 		db.SetMaxOpenConns(8)
 		bookings = postgres.NewReservations(db)
 		box = postgres.NewOutbox(db)
-		store = "postgres reservation schema + outbox"
+		unit = postgres.NewUnitOfWork(db)
+		store = "postgres reservation schema + outbox (same TX)"
 	}
 	var spaces app.SpaceCatalog = memory.Corte2Spaces()
 	if spaceURL := os.Getenv("SPACE_API_URL"); spaceURL != "" {
@@ -72,6 +74,7 @@ func main() {
 			Outbox:       box,
 			Inbox:        memory.NewInbox(),
 			Publisher:    publisher,
+			TX:           unit,
 		},
 		Tokens:        tokens,
 		InternalToken: paymentHopToken,
