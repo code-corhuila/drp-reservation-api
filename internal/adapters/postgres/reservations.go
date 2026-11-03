@@ -3,9 +3,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/code-corhuila/drp-reservation-api/internal/app"
 	"github.com/code-corhuila/drp-reservation-api/internal/domain"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type Reservations struct {
@@ -56,6 +58,17 @@ ON CONFLICT (id) DO UPDATE SET
 		reservation.ID, reservation.UserID, reservation.SpaceID,
 		reservation.Period.Start.UTC(), reservation.Period.End.UTC(),
 		string(reservation.State), reservation.CreatedAt.UTC(), reservation.UpdatedAt.UTC())
+	return mapOverlap(err)
+}
+
+func mapOverlap(err error) error {
+	if err == nil {
+		return nil
+	}
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "23P01" {
+		return app.ErrOverlap
+	}
 	return err
 }
 
