@@ -33,7 +33,7 @@ type TokenVerifier interface {
 }
 
 // Outbox records domain events in the same use-case as the aggregate write.
-// Flyway table reservation.outbox is the durable form; memory is the Corte 3 walk.
+// DATABASE_URL uses Flyway reservation.outbox (V003); empty DSN keeps memory.
 type Outbox interface {
 	Append(ctx context.Context, e domain.OutboxEvent) error
 	Unpublished(ctx context.Context) ([]domain.OutboxEvent, error)

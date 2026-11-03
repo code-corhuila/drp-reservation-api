@@ -47,6 +47,7 @@ func main() {
 		}
 	}
 	var bookings app.ReservationRepository = memory.NewReservations()
+	var box app.Outbox = memory.NewOutbox()
 	store := "memory bookings"
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		db, err := postgres.Open(dsn)
@@ -55,7 +56,8 @@ func main() {
 		}
 		db.SetMaxOpenConns(8)
 		bookings = postgres.NewReservations(db)
-		store = "postgres reservation schema"
+		box = postgres.NewOutbox(db)
+		store = "postgres reservation schema + outbox"
 	}
 	var spaces app.SpaceCatalog = memory.Corte2Spaces()
 	if spaceURL := os.Getenv("SPACE_API_URL"); spaceURL != "" {
@@ -67,7 +69,7 @@ func main() {
 			Reservations: bookings,
 			Spaces:       spaces,
 			Idempotency:  memory.NewIdempotency(),
-			Outbox:       memory.NewOutbox(),
+			Outbox:       box,
 			Inbox:        memory.NewInbox(),
 			Publisher:    publisher,
 		},
