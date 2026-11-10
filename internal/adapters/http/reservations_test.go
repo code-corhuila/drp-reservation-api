@@ -320,6 +320,42 @@ func TestForeignReservationIs404(t *testing.T) {
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("foreign GET %d", res.StatusCode)
 	}
+	var getBody errorBody
+	if err := json.NewDecoder(res.Body).Decode(&getBody); err != nil {
+		t.Fatal(err)
+	}
+	if getBody.Error != "NOT_FOUND" {
+		t.Fatalf("foreign GET envelope %+v", getBody)
+	}
+
+	cancel, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/reservations/"+dto.ID+"/cancel", nil)
+	cancel.Header.Set("Authorization", keys.bearer(t, other, "USER"))
+	denied, err := http.DefaultClient.Do(cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer denied.Body.Close()
+	if denied.StatusCode != http.StatusNotFound {
+		t.Fatalf("foreign cancel %d", denied.StatusCode)
+	}
+
+	list, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/reservations", nil)
+	list.Header.Set("Authorization", keys.bearer(t, other, "USER"))
+	listed, err := http.DefaultClient.Do(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listed.Body.Close()
+	if listed.StatusCode != http.StatusOK {
+		t.Fatalf("foreign list %d", listed.StatusCode)
+	}
+	var env listEnvelope
+	if err := json.NewDecoder(listed.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Meta.Total != 0 || len(env.Data) != 0 {
+		t.Fatalf("foreign list must be empty %+v", env)
+	}
 }
 
 func TestInternalPaymentFailedLeavesPending(t *testing.T) {
