@@ -16,10 +16,18 @@ func NewOutbox() *Outbox {
 	return &Outbox{}
 }
 
-func (o *Outbox) Append(_ context.Context, e domain.OutboxEvent) error {
+func (o *Outbox) Append(ctx context.Context, e domain.OutboxEvent) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	n := len(o.events)
 	o.events = append(o.events, e)
+	registerRollback(ctx, func() {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if len(o.events) > n {
+			o.events = o.events[:n]
+		}
+	})
 	return nil
 }
 
@@ -33,4 +41,16 @@ func (o *Outbox) Unpublished(_ context.Context) ([]domain.OutboxEvent, error) {
 		}
 	}
 	return out, nil
+}
+
+func (o *Outbox) MarkPublished(_ context.Context, eventID string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i, e := range o.events {
+		if e.EventID == eventID {
+			e.Published = true
+			o.events[i] = e
+		}
+	}
+	return nil
 }

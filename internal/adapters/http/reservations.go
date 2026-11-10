@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/code-corhuila/drp-reservation-api/internal/adapters/catalog"
 	"github.com/code-corhuila/drp-reservation-api/internal/app"
 	"github.com/code-corhuila/drp-reservation-api/internal/domain"
 )
@@ -165,13 +166,14 @@ func CreateReservation(b app.Bookings) http.HandlerFunc {
 			writeErr(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "La granularidad es de 30 minutos", []map[string]string{{"field": "startAt", "message": "Debe caer en un múltiplo de 30 minutos"}})
 			return
 		}
-		got, replay, cerr := b.Create(r.Context(), app.CreateCommand{
+		got, replay, cerr := b.Create(catalog.WithBearer(r.Context(), r.Header.Get("Authorization")), app.CreateCommand{
 			Actor:          principalFrom(r),
 			SpaceID:        body.SpaceID,
 			StartAt:        start,
 			EndAt:          end,
 			IdempotencyKey: key,
 			RawBody:        string(raw),
+			CorrelationID:  TraceID(r),
 		})
 		if errors.Is(cerr, app.ErrConflict) {
 			writeErr(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "La misma Idempotency-Key se usó con otro cuerpo", nil)
@@ -220,7 +222,7 @@ func CancelReservation(b app.Bookings) http.HandlerFunc {
 			writeErr(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "El identificador no es un UUID canónico", []map[string]string{{"field": "reservationId", "message": "Debe ser un UUID en minúsculas con guiones"}})
 			return
 		}
-		got, err := b.Cancel(r.Context(), principalFrom(r), id)
+		got, err := b.Cancel(r.Context(), principalFrom(r), id, TraceID(r))
 		if errors.Is(err, app.ErrNotFound) {
 			writeErr(w, r, http.StatusNotFound, "NOT_FOUND", "La reserva no existe", nil)
 			return
