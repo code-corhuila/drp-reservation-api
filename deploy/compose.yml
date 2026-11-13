@@ -1,4 +1,5 @@
 # API process only (Anexo J). No Postgres container. Engine: drp-infra-postgres.
+# Walking events stay POST /internal/events (Q-001). No AMQP in this file.
 
 name: ${COMPOSE_PROJECT_NAME:-drp-dev}
 
@@ -7,11 +8,17 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    container_name: drp-reservation-api
+    container_name: drp-reservation-api-${DRP_ENV:-dev}
     environment:
       HTTP_ADDR: ${HTTP_ADDR:-:8083}
       SERVICE_NAME: ${SERVICE_NAME:-reservation-service}
       IDENTITY_JWKS_URL: ${IDENTITY_JWKS_URL:-http://identity-api:8081/api/v1/auth/jwks}
+      DATABASE_URL: ${DATABASE_URL:-postgres://reservation_app:${RESERVATION_APP_PASSWORD:-change-me-reservation}@postgres:5432/drp?sslmode=disable}
+      PAYMENT_INTERNAL_TOKEN: ${PAYMENT_INTERNAL_TOKEN:-change-me-tb6-payment}
+      NOTIFICATION_INTERNAL_TOKEN: ${NOTIFICATION_INTERNAL_TOKEN:-change-me-notification-hop}
+      INTERNAL_EVENT_TOKEN: ${INTERNAL_EVENT_TOKEN:-}
+      NOTIFICATION_API_URL: ${NOTIFICATION_API_URL:-http://notification-api:8085}
+      SPACE_API_URL: ${SPACE_API_URL:-http://space-api:8082}
     ports:
       - "${HTTP_PORT:-8083}:8083"
     networks:
@@ -19,5 +26,5 @@ services:
 
 networks:
   pg:
-    name: ${RESERVATION_API_NETWORK:-drp-dev_default}
+    name: ${RESERVATION_API_NETWORK:-${COMPOSE_PROJECT_NAME:-drp-dev}_default}
     external: true
