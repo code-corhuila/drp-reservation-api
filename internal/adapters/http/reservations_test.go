@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -543,6 +544,72 @@ func TestInternalEventsUnsetTokenIs503(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
+func TestListLimitOutOfRangeIs400(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	for _, raw := range []string{"0", "101"} {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/reservations?limit="+raw, nil)
+		req.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("limit=%s status %d", raw, res.StatusCode)
+		}
+		var rawBody map[string]any
+		if err := json.NewDecoder(res.Body).Decode(&rawBody); err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if rawBody["error"] != "VALIDATION_ERROR" {
+			t.Fatalf("limit=%s envelope %+v", raw, rawBody)
+		}
+	}
+}
+
+func TestListFarPageIs200Empty(t *testing.T) {
+	mux, keys := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/reservations?page=9999", nil)
+	req.Header.Set("Authorization", keys.bearer(t, member, "USER"))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	var env listEnvelope
+	if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data == nil || len(env.Data) != 0 || env.Meta.Page != 9999 {
+		t.Fatalf("envelope %+v", env)
+	}
+}
+
+func TestRejectsAlgNone(t *testing.T) {
+	mux, _ := reservationMux(t)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + member + `","role":"USER","exp":4102444800}`))
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/reservations", nil)
+	req.Header.Set("Authorization", "Bearer "+header+"."+payload+".")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("none %d", res.StatusCode)
 	}
 }
 
